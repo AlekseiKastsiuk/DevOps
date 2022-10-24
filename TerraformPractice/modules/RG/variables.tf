@@ -9,11 +9,7 @@ variable "az_rg_location" {
   type        = string
 }
 
-/*variable "az_tags" {
-  description = "A mapping of tags which should be assigned to all resources"
-  type        = map(any)
-  default     = {}
-}*/
+
 variable "env" {
   
 }
