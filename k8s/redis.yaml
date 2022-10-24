@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata: 
+      labels:
+        app: redis
+    spec: 
+      containers:
+      - name: redis
+        #Update deployment for the redis with the path to your container registry and your container image.
+        image: aliakseikastsiuk.azurecr.io/redis:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 6379
+        #Redis deployment should have configured requests: - cpu: 100m - memory: 100Mi
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+      #update deployment to utilize secret
+      imagePullSecrets:
+      - name: secret
+      #Greetings application should utilize "backendpool" node pool.
+      nodeSelector:
+        agentpool: backendpool
