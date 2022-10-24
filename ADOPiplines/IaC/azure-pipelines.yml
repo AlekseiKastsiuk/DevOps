@@ -1,0 +1,525 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+
+  branches:
+
+    include:
+      - refs/heads/develop
+      - refs/heads/bugfix
+      - refs/heads/hotfix
+      - refs/heads/prod
+      - refs/heads/master
+
+name: $(TeamProject)_$(Build.DefinitionName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: build
+
+    variables:
+    - group: azGroupVar
+
+    jobs:
+    - job: build
+      continueOnError: false
+      steps:
+
+      
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        - task: PowerShell@2
+          displayName: test Terraform
+          inputs:
+            targetType: 'inline'
+            script: |
+              cd terraform-existing
+              terraform fmt
+              terraform init -backend=false
+              terraform validate
+
+        - task: CopyFiles@2
+          inputs:
+            SourceFolder: 'terraform-existing'
+            Contents: '**.tf'
+            TargetFolder: '$(Build.BinariesDirectory)/terraform-existing'
+        
+        - task: ArchiveFiles@2
+          inputs:
+            rootFolderOrFile: '$(Build.BinariesDirectory)/terraform-existing'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.artifactstagingdirectory)/iac.terraform.$(terraformVersion).zip'
+            replaceExistingArchive: true
+        
+        - task: PublishBuildArtifacts@1
+          inputs:
+            PathtoPublish: '$(Build.artifactstagingdirectory)'
+            ArtifactName: 'TFS'
+            publishLocation: 'Container'
+
+#Dev Env---------------------------------------------------------------------------------
+  - stage: PlanDev
+    dependsOn: 
+      - build
+    condition: succeeded ('build')
+
+    variables:
+    - group: azGroupVar
+    - group: variableGroupDevEnv
+
+    jobs:
+    - job: planTerraform
+      steps:
+      
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            backendServiceArm: 'NewADOvsAzure'
+            backendAzureRmResourceGroupName: $(rgName)
+            backendAzureRmStorageAccountName: $(storageAccountName)
+            backendAzureRmContainerName: 'containertf'
+            backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+        # $(System.DefaultWorkingDirectory)
+
+        - task: PowerShell@2
+          inputs:
+            targetType: 'inline'
+            script: |
+              # Write your PowerShell commands here.
+              
+              Write-Host "work dir-$(System.DefaultWorkingDirectory)"
+              Write-Host "in folder"
+              ls -l
+              
+
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            commandOptions: '-var ENV=$(env) 
+                             -var LOCATION=$(location) 
+                             -var RESOURCE_NAME_PREFIX=$(prefix) 
+                             -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin) 
+                             -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+            environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+
+  - stage: ApplyDev
+    dependsOn: 
+      - PlanDev
+    condition: succeeded ('PlanDev') #что бы проходил только в майн
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupDevEnv
+
+    jobs:
+    
+      - deployment: DeployCoreInfrastructure
+        displayName: "ApplyDev"
+        environment: DevEnv
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+      
+              - task: DownloadPipelineArtifact@2
+                inputs:
+                  buildType: 'current'
+                  itemPattern: '**/*.zip'
+                  targetPath: '$(Build.artifactstagingdirectory)'
+              
+              - task: ExtractFiles@1
+                inputs:
+                  archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+                  destinationFolder: '$(System.DefaultWorkingDirectory)'
+                  cleanDestinationFolder: false
+                  overwriteExistingFiles: true
+              
+              - task: TerraformInstaller@0
+                inputs:
+                  terraformVersion: '$(terraformVersion)'
+              
+              - task: TerraformTaskV3@3
+                inputs:
+                  provider: 'azurerm'
+                  command: 'init'
+                  workingDirectory: '$(System.DefaultWorkingDirectory)'
+                  backendServiceArm: 'NewADOvsAzure'
+                  backendAzureRmResourceGroupName: $(rgName)
+                  backendAzureRmStorageAccountName: $(storageAccountName)
+                  backendAzureRmContainerName: $(container)
+                  backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+              
+              - task: TerraformTaskV3@3
+                inputs:
+                  provider: 'azurerm'
+                  command: 'apply'
+                  commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)  
+                                  -var RESOURCE_NAME_PREFIX=$(prefix)  
+                                  -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)  
+                                  -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+                  environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  #Dev Env End---------------------------------------------------------------------------------------
+
+
+#QA Env---------------------------------------------------------------------------------
+  - stage: PlanQA
+    dependsOn: 
+      - build
+    condition: succeeded ('build')
+
+    variables:
+    - group: azGroupVar
+    - group: variableGroupQAEnv
+
+    jobs:
+    - job: planTerraform
+      steps:
+      
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+            backendServiceArm: 'NewADOvsAzure'
+            backendAzureRmResourceGroupName: $(rgName)
+            backendAzureRmStorageAccountName: $(storageAccountName)
+            backendAzureRmContainerName: $(container)
+            backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            commandOptions: '-var ENV=$(env) 
+                             -var LOCATION=$(location) 
+                             -var RESOURCE_NAME_PREFIX=$(prefix) 
+                             -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin) 
+                             -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+            environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+
+  - stage: ApplyQA
+      
+    dependsOn: 
+      - PlanQA
+    condition: succeeded ('PlanQA')
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupQAEnv
+
+    jobs:
+      - deployment: DeployCoreInfrastructure
+        displayName: "ApplyQA"
+        environment: QAEnv
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    buildType: 'current'
+                    itemPattern: '**/*.zip'
+                    targetPath: '$(Build.artifactstagingdirectory)'
+                
+                - task: ExtractFiles@1
+                  inputs:
+                    archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+                    destinationFolder: '$(System.DefaultWorkingDirectory)'
+                    cleanDestinationFolder: false
+                    overwriteExistingFiles: true
+                
+                - task: TerraformInstaller@0
+                  inputs:
+                    terraformVersion: '$(terraformVersion)'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)'
+                    backendServiceArm: 'NewADOvsAzure'
+                    backendAzureRmResourceGroupName: $(rgName)
+                    backendAzureRmStorageAccountName: $(storageAccountName)
+                    backendAzureRmContainerName: $(container)
+                    backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)  
+                                    -var RESOURCE_NAME_PREFIX=$(prefix)  
+                                    -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)  
+                                    -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+                    environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  #QA Env End---------------------------------------------------------------------------------------
+
+
+#UAT Env---------------------------------------------------------------------------------
+  - stage: PlanUAT
+    dependsOn: 
+      - ApplyQA
+      - ApplyDev
+    condition: and(succeeded ('ApplyQA'), succeeded ('ApplyDev'))
+
+    variables:
+    - group: azGroupVar
+    - group: variableGroupUatEnv
+
+    jobs:
+    - job: planTerraform
+      steps:
+      
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+            backendServiceArm: 'NewADOvsAzure'
+            backendAzureRmResourceGroupName: $(rgName)
+            backendAzureRmStorageAccountName: $(storageAccountName)
+            backendAzureRmContainerName: $(container)
+            backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            commandOptions: '-var ENV=$(env) -var LOCATION=$(location) -var RESOURCE_NAME_PREFIX=$(prefix) -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin) -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+            environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+
+  - stage: ApplyUAT
+      
+    dependsOn: 
+      - PlanUAT
+    condition: succeeded ('PlanUAT')
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupUatEnv
+
+    jobs:
+      - deployment: DeployCoreInfrastructure
+        displayName: "ApplyUAT"
+        environment: UATEnv
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    buildType: 'current'
+                    itemPattern: '**/*.zip'
+                    targetPath: '$(Build.artifactstagingdirectory)'
+                
+                - task: ExtractFiles@1
+                  inputs:
+                    archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+                    destinationFolder: '$(System.DefaultWorkingDirectory)'
+                    cleanDestinationFolder: false
+                    overwriteExistingFiles: true
+                
+                - task: TerraformInstaller@0
+                  inputs:
+                    terraformVersion: '$(terraformVersion)'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)'
+                    backendServiceArm: 'NewADOvsAzure'
+                    backendAzureRmResourceGroupName: $(rgName)
+                    backendAzureRmStorageAccountName: $(storageAccountName)
+                    backendAzureRmContainerName: $(container)
+                    backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)  
+                                    -var RESOURCE_NAME_PREFIX=$(prefix)  
+                                    -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)  
+                                    -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+                    environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+#UAT Env End---------------------------------------------------------------------------------------
+
+
+
+
+#Prod Env---------------------------------------------------------------------------------
+  - stage: PlanProd
+    dependsOn: 
+      - ApplyUAT
+    condition: succeeded ('ApplyUAT')
+
+    variables:
+    - group: azGroupVar
+    - group: variableGroupProdEnv
+
+    jobs:
+    - job: planTerraform
+      steps:
+      
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            backendServiceArm: 'NewADOvsAzure'
+            backendAzureRmResourceGroupName: '$(rgName)'
+            backendAzureRmStorageAccountName: '$(storageAccountName)'
+            backendAzureRmContainerName: '$(container)'
+            backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            commandOptions: '-var ENV=$(env) -var LOCATION=$(location) -var RESOURCE_NAME_PREFIX=$(prefix) -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin) -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+            environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+
+  - stage: ApplyProd
+      
+    dependsOn: 
+      - PlanProd
+    condition: succeeded ('PlanProd')
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupProdEnv
+
+    jobs:
+      - deployment: DeployCoreInfrastructure
+        displayName: "ApplyProd"
+        environment: ProdEnv
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    buildType: 'current'
+                    itemPattern: '**/*.zip'
+                    targetPath: '$(Build.artifactstagingdirectory)'
+                
+                - task: ExtractFiles@1
+                  inputs:
+                    archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+                    destinationFolder: '$(System.DefaultWorkingDirectory)'
+                    cleanDestinationFolder: false
+                    overwriteExistingFiles: true
+                
+                - task: TerraformInstaller@0
+                  inputs:
+                    terraformVersion: '$(terraformVersion)'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)'
+                    backendServiceArm: 'NewADOvsAzure'
+                    backendAzureRmResourceGroupName: $(rgName)
+                    backendAzureRmStorageAccountName: $(storageAccountName)
+                    backendAzureRmContainerName: $(container)
+                    backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+                
+                - task: TerraformTaskV3@3
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)  
+                                    -var RESOURCE_NAME_PREFIX=$(prefix)  
+                                    -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)  
+                                    -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+                    environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  # #Prod Env End---------------------------------------------------------------------------------------

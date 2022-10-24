@@ -1,0 +1,265 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+name: $(TeamProject)_$(Build.DefinitionName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: build
+
+    variables:
+    - group: azGroupVar
+
+    jobs:
+    - job: build
+      continueOnError: false
+      steps:
+
+      
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        - task: PowerShell@2
+          displayName: test Terraform
+          inputs:
+            targetType: 'inline'
+            script: |
+              cd terraform-existing
+              terraform fmt
+              terraform init -backend=false
+              terraform validate
+
+        - task: CopyFiles@2
+          inputs:
+            SourceFolder: 'terraform-existing'
+            Contents: '**.tf'
+            TargetFolder: '$(Build.BinariesDirectory)/terraform-existing'
+        
+        - task: ArchiveFiles@2
+          inputs:
+            rootFolderOrFile: '$(Build.BinariesDirectory)/terraform-existing'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.artifactstagingdirectory)/iac.terraform.$(terraformVersion).zip'
+            replaceExistingArchive: true
+        
+        - task: PublishBuildArtifacts@1
+          inputs:
+            PathtoPublish: '$(Build.artifactstagingdirectory)'
+            ArtifactName: 'TFS'
+            publishLocation: 'Container'
+
+#Dev Env---------------------------------------------------------------------------------
+
+
+  - stage: ApplyDev
+
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupDevEnv
+
+    jobs:
+    
+    - job: destroyDev
+      steps:
+
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          buildType: 'current'
+          itemPattern: '**/*.zip'
+          targetPath: '$(Build.artifactstagingdirectory)'
+      
+      - task: ExtractFiles@1
+        inputs:
+          archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+          destinationFolder: '$(System.DefaultWorkingDirectory)'
+          cleanDestinationFolder: false
+          overwriteExistingFiles: true
+      
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '$(terraformVersion)'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)'
+          backendServiceArm: 'NewADOvsAzure'
+          backendAzureRmResourceGroupName: $(rgName)
+          backendAzureRmStorageAccountName: $(storageAccountName)
+          backendAzureRmContainerName: $(container)
+          backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'destroy'
+          commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)   -var RESOURCE_NAME_PREFIX=$(prefix)   -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)   -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+          environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  #Dev Env End---------------------------------------------------------------------------------------
+
+
+#QA Env---------------------------------------------------------------------------------
+ 
+
+  - stage: ApplyQA
+      
+
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupQAEnv
+
+    jobs:
+    - job: destroyQA
+      steps:
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: '$(terraformVersion)'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+            backendServiceArm: 'NewADOvsAzure'
+            backendAzureRmResourceGroupName: $(rgName)
+            backendAzureRmStorageAccountName: $(storageAccountName)
+            backendAzureRmContainerName: $(container)
+            backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'destroy'
+            commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)   -var RESOURCE_NAME_PREFIX=$(prefix)   -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)   -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+            environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  #QA Env End---------------------------------------------------------------------------------------
+
+
+#UAT Env---------------------------------------------------------------------------------
+
+
+  - stage: ApplyUAT
+      
+
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupUatEnv
+
+    jobs:
+    - job: destroyUAT
+      steps:
+    
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          buildType: 'current'
+          itemPattern: '**/*.zip'
+          targetPath: '$(Build.artifactstagingdirectory)'
+      
+      - task: ExtractFiles@1
+        inputs:
+          archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+          destinationFolder: '$(System.DefaultWorkingDirectory)'
+          cleanDestinationFolder: false
+          overwriteExistingFiles: true
+      
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '$(terraformVersion)'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)'
+          backendServiceArm: 'NewADOvsAzure'
+          backendAzureRmResourceGroupName: $(rgName)
+          backendAzureRmStorageAccountName: $(storageAccountName)
+          backendAzureRmContainerName: $(container)
+          backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'destroy'
+          commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)   -var RESOURCE_NAME_PREFIX=$(prefix)   -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)   -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+          environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+#UAT Env End---------------------------------------------------------------------------------------
+
+
+
+
+#Prod Env---------------------------------------------------------------------------------
+
+
+  - stage: ApplyProd
+      
+  
+    variables:
+    - group: azGroupVar
+    - group: variableGroupProdEnv
+
+    jobs:
+    - job: destroyProd
+      steps:
+    
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          buildType: 'current'
+          itemPattern: '**/*.zip'
+          targetPath: '$(Build.artifactstagingdirectory)'
+      
+      - task: ExtractFiles@1
+        inputs:
+          archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+          destinationFolder: '$(System.DefaultWorkingDirectory)'
+          cleanDestinationFolder: false
+          overwriteExistingFiles: true
+      
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: '$(terraformVersion)'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)'
+          backendServiceArm: 'NewADOvsAzure'
+          backendAzureRmResourceGroupName: $(rgName)
+          backendAzureRmStorageAccountName: $(storageAccountName)
+          backendAzureRmContainerName: $(container)
+          backendAzureRmKey: 'tf/terraform-$(env).tfstate'
+      
+      - task: TerraformTaskV3@3
+        inputs:
+          provider: 'azurerm'
+          command: 'destroy'
+          commandOptions: '-var ENV=$(env)  -var LOCATION=$(location)   -var RESOURCE_NAME_PREFIX=$(prefix)   -var SQL_SERVER_ADMINISTRATOR_LOGIN=$(sqlServLogin)   -var SQL_SERVER_ADMINISTRATOR_PASSWORD=$(sqlServPass)'
+          environmentServiceNameAzureRM: 'NewADOvsAzure'
+
+  # #Prod Env End---------------------------------------------------------------------------------------
