@@ -1,0 +1,11 @@
+az_rg_name        = "qa"
+az_rg_location    = "eastus"
+vnet_name         = "vnet1"
+vnet_spase        = ["10.0.0.0/16"]
+nsg_name          = "nsg"
+AzureVM_Name_pub  = "VMpub"
+AzureVM_Name_priv = "VMpriv"
+compname_pub      = "Comppub"
+Compname_priv     = "comppriv"
+pub_nic_1         = "pub_nic_1"
+env = "qa"
