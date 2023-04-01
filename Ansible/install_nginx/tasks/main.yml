@@ -1,0 +1,35 @@
+---
+# tasks file for install_nginx
+
+
+- name: install nginx
+  apt:
+    pkg: nginx
+    state: present
+
+- name: Change index.html
+  copy: 
+    src: index.html 
+    dest: "{{ dest }}"
+    mode: 0555
+  notify: restart nginx
+  
+- name: Start nginx
+  service: 
+    name: nginx
+    state: started
+    enabled: yes
+     
+- name: wait for port 80
+  wait_for:
+    port: 80
+    delay: 0
+    timeout: 3
+    state: started
+
+- name: My name is present on the index.html page
+  uri:
+    url: http://localhost/index.html
+    return_content: yes
+  register: MyName
+  until: '"Kastsiuk Aliaksei" in MyName.content'
