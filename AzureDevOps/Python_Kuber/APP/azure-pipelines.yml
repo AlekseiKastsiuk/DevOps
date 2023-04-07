@@ -1,0 +1,80 @@
+# Docker
+# Build a Docker image
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- master
+
+resources:
+- repo: self
+
+variables:
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: Build image
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+
+
+    - task: Docker@2
+      displayName: "Docker build and push"
+      inputs:
+        containerRegistry: 'DockerRegistry'
+        repository: 'azurecontainerregistry'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: $(tag)
+        
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Pipeline.Workspace)/s/kubernetes'
+        artifact: 'manifests'
+        publishLocation: 'pipeline'
+
+
+- stage: Deploy
+  displayName: Deploy to Dev
+  dependsOn: Build
+  jobs:
+  - job: Deploy
+    displayName: deploy
+    pool:
+      vmImage: ubuntu-latest
+    steps: 
+    
+
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'manifests'
+        targetPath: '$(Pipeline.Workspace)/manifests'
+    
+
+    - task: KubernetesManifest@0
+      inputs:
+        action: 'createSecret'
+        kubernetesServiceConnection: 'kubernetesConnection'
+        namespace: 'default'
+        secretType: 'dockerRegistry'
+        secretName: 'kubernetessecret05'
+        dockerRegistryEndpoint: 'DockerRegistry'
+
+    - task: KubernetesManifest@0
+      inputs:
+        action: 'deploy'
+        kubernetesServiceConnection: 'kubernetesConnection'
+        namespace: 'default'
+        manifests: |
+          $(Pipeline.Workspace)/manifests/deployment.yaml
+          $(Pipeline.Workspace)/manifests/Loadbalancer.yaml
+        containers: 'acraleks0550.azurecr.io/azurecontainerregistry:$(tag)'
+        imagePullSecrets: 'kubernetessecret05'
+    
+
+

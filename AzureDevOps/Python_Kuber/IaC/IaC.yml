@@ -1,0 +1,152 @@
+# trigger:
+# - main
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: build
+
+    jobs:
+    - job: build
+      continueOnError: false
+      steps:
+      
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: 'latest'
+
+        - task: PowerShell@2
+          displayName: test Terraform
+          inputs:
+            targetType: 'inline'
+            script: |
+              cd Terraform
+              terraform fmt
+              terraform init -backend=false
+              terraform validate
+
+        - task: CopyFiles@2
+          inputs:
+            SourceFolder: 'Terraform'
+            Contents: |
+              **.tf
+              **.tfvars
+            TargetFolder: '$(Build.BinariesDirectory)/Terraform'
+        
+        - task: ArchiveFiles@2
+          inputs:
+            rootFolderOrFile: '$(Build.BinariesDirectory)/Terraform'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.artifactstagingdirectory)/iac.terraform.zip'
+            replaceExistingArchive: true
+        
+        - task: PublishBuildArtifacts@1
+          inputs:
+            PathtoPublish: '$(Build.artifactstagingdirectory)'
+            ArtifactName: 'TFS'
+            publishLocation: 'Container'
+
+#Dev Env---------------------------------------------------------------------------------
+  - stage: PlanDev
+    dependsOn: 
+      - build
+    condition: succeeded ('build')
+
+
+
+    jobs:
+    - job: planTerraform
+      steps:
+      
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'current'
+            itemPattern: '**/*.zip'
+            targetPath: '$(Build.artifactstagingdirectory)'
+        
+        - task: ExtractFiles@1
+          inputs:
+            archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+            destinationFolder: '$(System.DefaultWorkingDirectory)'
+            cleanDestinationFolder: false
+            overwriteExistingFiles: true
+        
+        - task: TerraformInstaller@0
+          inputs:
+            terraformVersion: 'latest'
+
+        
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            backendServiceArm: 'trainingServiceConnection'
+            backendAzureRmResourceGroupName: 'storrage'
+            backendAzureRmStorageAccountName: 'storragealeks'
+            backendAzureRmContainerName: 'terraform'
+            backendAzureRmKey: 'tf/terraform.tfstate'
+
+
+
+        - task: TerraformTaskV3@3
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            environmentServiceNameAzureRM: 'trainingServiceConnection'
+
+
+  - stage: ApplyDev
+    dependsOn: 
+      - PlanDev
+    condition: succeeded ('PlanDev')
+  
+
+
+    jobs:
+    
+      - deployment: DeployCoreInfrastructure
+        displayName: "ApplyDev"
+        environment: DevEnv
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+      
+              - task: DownloadPipelineArtifact@2
+                inputs:
+                  buildType: 'current'
+                  itemPattern: '**/*.zip'
+                  targetPath: '$(Build.artifactstagingdirectory)'
+              
+              - task: ExtractFiles@1
+                inputs:
+                  archiveFilePatterns: '$(Build.artifactstagingdirectory)/**/*.zip'
+                  destinationFolder: '$(System.DefaultWorkingDirectory)'
+                  cleanDestinationFolder: false
+                  overwriteExistingFiles: true
+              
+
+              - task: TerraformInstaller@0
+                inputs:
+                  terraformVersion: 'latest'
+
+              
+              - task: TerraformTaskV3@3
+                inputs:
+                  provider: 'azurerm'
+                  command: 'init'
+                  workingDirectory: '$(System.DefaultWorkingDirectory)'
+                  backendServiceArm: 'trainingServiceConnection'
+                  backendAzureRmResourceGroupName: 'storrage'
+                  backendAzureRmStorageAccountName: 'storragealeks'
+                  backendAzureRmContainerName: 'terraform'
+                  backendAzureRmKey: 'tf/terraform.tfstate'
+
+              
+              - task: TerraformTaskV3@3
+                inputs:
+                  provider: 'azurerm'
+                  command: 'apply'
+                  environmentServiceNameAzureRM: 'trainingServiceConnection'
