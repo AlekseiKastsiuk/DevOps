@@ -12,6 +12,5 @@ class Solution(object):
             prev = curr
             
         return result
-    
-checker = Solution()
-print(checker.romanToInt("IV"))
+
+print (Solution().romanToInt("IV"))
