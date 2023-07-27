@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Context reloadable="true">
+
+	<Resource name="jdbc/world" auth="Container" type="javax.sql.DataSource"
+		url="jdbc:mysql://mysql:3306/world"
+		driverClassName="com.mysql.jdbc.Driver"
+		username="root"
+		password="Rootpass123"
+		/>
+
+</Context>

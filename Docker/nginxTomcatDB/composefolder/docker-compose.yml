@@ -1,0 +1,64 @@
+services:
+#create mysql container with image and .sql file from azure storrage
+  mysql:
+    image: aliakseikastsiuk.azurecr.io/mysql:latest
+    container_name: sql
+    volumes:
+    - "dbsql:/docker-entrypoint-initdb.d" # docker-entrypoint-initdb.d folder for execute .sql script when create container 
+    # MySQL use environment variables MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD.
+    environment: 
+      MYSQL_ROOT_PASSWORD: <rootpass>
+      MYSQL_DATABASE: world
+      MYSQL_USER: <username>
+      MYSQL_PASSWORD: <userpass>
+
+# create tomcat container with image and web application from azure storrage
+  tomcat: 
+    image: aliakseikastsiuk.azurecr.io/tomcat:latest
+    container_name: tomcat
+    depends_on:
+      - mysql
+    ports:
+      - "8080:8080"
+    volumes:
+      - "tomcat:/usr/local/tomcat/webapps"
+    environment:
+      # environment variables JDBC_URL, JDBC_USER, JDBC_PASS to access MySQL database
+      JDBC_URL: "jdbc:mysql://mysql:3306/world" # MySQL database connection string: jdbc:mysql://<container name>:3306/world
+      JDBC_USER: "root"
+      JDBC_PASS: <rootpass>
+
+#create nginx container with image and web application from azure storrage
+#Nginx exposed to the Public network with DNS name and port 80.
+  nginx:
+    image: aliakseikastsiuk.azurecr.io/nginx:latest
+    container_name: nginx
+    depends_on:
+      - tomcat
+    domainname: aliakseikastsiuk
+    volumes:
+      - "nginx:/etc/nginx/:ro"
+    ports:
+      - 80:80
+  
+
+# use storrage in azure
+volumes:
+  tomcat:
+    driver: azure_file
+    driver_opts:
+      share_name: tomcat
+      storage_account_name: aliakseikastsiuk 
+
+
+  dbsql:
+    driver: azure_file
+    driver_opts:
+      share_name: dbsql
+      storage_account_name: aliakseikastsiuk
+
+  nginx:
+    driver: azure_file
+    driver_opts:
+      share_name: nginx
+      storage_account_name: aliakseikastsiuk 
