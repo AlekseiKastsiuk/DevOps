@@ -1,7 +1,0 @@
-# Create a config map containing my name 
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: configmap
-data:
-  NAME: Aliaksei
